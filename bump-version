@@ -1,0 +1,175 @@
+#!/bin/bash
+
+#####################################################################
+# bump-version - utility to update the version of a gradle project,
+#                intended to be used with git flow
+#####################################################################
+
+function usage() {
+    echo "Usage: bump-version NEW-VERSION"
+    echo ""
+    echo "Update the version in gradle.properties to be NEW-VERSION and git commit"
+    echo "the change. Requirements:"
+    echo " - NEW-VERSION must be a semantic version of the form MAJOR.MINOR.PATCH"
+    echo "   that is greater than the version in gradle.properties, e.g., 1.2.42"
+    echo " - the current directory must be a git working directory in a clean state"
+    echo " - gradle.properties file must exist in the current directory with a property"
+    echo "   named version"
+    echo ""
+    echo "The result is a local commit that has only the version bump change. The"
+    echo "commit should be reviewed and then pushed."
+    echo ""
+    echo "See also:"
+    echo "   git flow - https://github.com/nvie/gitflow"
+    echo "   semantic versioning - https://semver.org"
+    echo ""
+}
+
+# semver utility functions adapted from https://github.com/cloudflare/semver_bash
+SEMVER_REGEX='[^0-9]*\([0-9]*\)[.]\([0-9]*\)[.]\([0-9]*\)\([0-9A-Za-z-]*\)'
+
+function semverValid() {
+    return $(echo $1 | grep -q "$SEMVER_REGEX")
+}
+
+function semverParseInto() {
+    #MAJOR
+    eval $2=`echo $1 | sed -e "s#$SEMVER_REGEX#\1#"`
+    #MINOR
+    eval $3=`echo $1 | sed -e "s#$SEMVER_REGEX#\2#"`
+    #MINOR
+    eval $4=`echo $1 | sed -e "s#$SEMVER_REGEX#\3#"`
+    #SPECIAL
+    eval $5=`echo $1 | sed -e "s#$SEMVER_REGEX#\4#"`
+}
+
+function semverEQ() {
+    local MAJOR_A=0
+    local MINOR_A=0
+    local PATCH_A=0
+    local SPECIAL_A=0
+
+    local MAJOR_B=0
+    local MINOR_B=0
+    local PATCH_B=0
+    local SPECIAL_B=0
+
+    semverParseInto $1 MAJOR_A MINOR_A PATCH_A SPECIAL_A
+    semverParseInto $2 MAJOR_B MINOR_B PATCH_B SPECIAL_B
+
+    if [ $MAJOR_A -ne $MAJOR_B ]; then return 1; fi
+    if [ $MINOR_A -ne $MINOR_B ]; then return 1; fi
+    if [ $PATCH_A -ne $PATCH_B ]; then return 1; fi
+    if [[ "_$SPECIAL_A" != "_$SPECIAL_B" ]]; then return 1; fi
+
+    return 0
+}
+
+function semverLT() {
+    local MAJOR_A=0
+    local MINOR_A=0
+    local PATCH_A=0
+    local SPECIAL_A=0
+
+    local MAJOR_B=0
+    local MINOR_B=0
+    local PATCH_B=0
+    local SPECIAL_B=0
+
+    semverParseInto $1 MAJOR_A MINOR_A PATCH_A SPECIAL_A
+    semverParseInto $2 MAJOR_B MINOR_B PATCH_B SPECIAL_B
+
+    if [ $MAJOR_A -lt $MAJOR_B ]; then
+        return 0
+    fi
+
+    if [[ $MAJOR_A -le $MAJOR_B  && $MINOR_A -lt $MINOR_B ]]; then
+        return 0
+    fi
+
+    if [[ $MAJOR_A -le $MAJOR_B  && $MINOR_A -le $MINOR_B && $PATCH_A -lt $PATCH_B ]]; then
+        return 0
+    fi
+
+    if [[ "_$SPECIAL_A"  == "_" ]] && [[ "_$SPECIAL_B"  == "_" ]] ; then
+        return 1
+    fi
+    if [[ "_$SPECIAL_A"  == "_" ]] && [[ "_$SPECIAL_B"  != "_" ]] ; then
+        return 1
+    fi
+    if [[ "_$SPECIAL_A"  != "_" ]] && [[ "_$SPECIAL_B"  == "_" ]] ; then
+        return 0
+    fi
+
+    if [[ "_$SPECIAL_A" < "_$SPECIAL_B" ]]; then
+        return 0
+    fi
+
+    return 1
+}
+
+function semverGT() {
+    semverEQ $1 $2
+    local EQ=$?
+
+    semverLT $1 $2
+    local LT=$?
+
+    if [ $EQ -ne 0 ] && [ $LT -ne 0 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+### Main ###
+
+if [ -z "$1" ] || [ "$1" == "-h" ] || [ "$1" == "--help" ] || [ $1 == "help" ]; then
+    usage
+    exit 0
+fi
+
+NEW_VERSION=${1}
+
+# validate new version
+if ! semverValid $NEW_VERSION; then
+    echo "ERROR: $NEW_VERSION is not a valid version"
+    echo ""
+    echo "(bump-version -h for help)"
+    exit 1
+fi
+
+# validate NEW_VERSION against OLD_VERSION
+VERSION_FILE=gradle.properties
+if [ ! -r $VERSION_FILE ]; then
+    echo "ERROR: Cannot find $VERSION_FILE, run from project root"
+    echo ""
+    echo "(bump-version -h for help)"
+    exit 1
+fi
+
+OLD_VERSION=$(awk -F= '/version/ {gsub(/ /, "" , $0); print $2}' $VERSION_FILE)
+
+if ! semverGT $NEW_VERSION $OLD_VERSION; then
+    echo "ERROR: New version $NEW_VERSION must be greater than $OLD_VERSION"
+    echo ""
+    echo "(bump-version -h for help)"
+    exit 2
+fi
+
+# make sure git working dir is clean
+if [[ -n $(git status --porcelain) ]]; then
+    echo "ERROR: Working directory is dirty. Commit changes before bumping the version."
+    echo ""
+    echo "(bump-version -h for help)"
+    exit 3
+fi
+
+# bump, commit, and show diff for review
+sed -i.bak "s/version *= *.*/version = ${NEW_VERSION}/" $VERSION_FILE
+rm ${VERSION_FILE}.bak
+git add $VERSION_FILE
+git ci -m "Bump version: $OLD_VERSION → $NEW_VERSION"
+git show
+echo
+echo "++ Version bumped and committed as shown above. Review commit before pushing. ++"
