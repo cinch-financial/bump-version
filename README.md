@@ -5,7 +5,7 @@ gradle project using [git flow](http://nvie.com/posts/a-successful-git-branching
 
 ## Installation
 
-- install [git-flow](https://github.com/nvie/gitflow) tools
+- install [git-flow](http://danielkummer.github.io/git-flow-cheatsheet/) tools
 - copy `bump-version` to `bin/` directory of your project
 - create or update `gradle.properties` file to have a version property:
 
